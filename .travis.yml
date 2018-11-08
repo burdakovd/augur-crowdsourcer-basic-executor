@@ -1,0 +1,17 @@
+language: node_js
+
+sudo: required
+
+services:
+  - docker
+
+node_js:
+  - "8.12"
+
+script:
+  - yarn flow
+  - yarn lint
+  - yarn test --coverage
+  - yarn build
+  - git clean -dfx
+  - docker build . -t augur_dispute_pool_executor

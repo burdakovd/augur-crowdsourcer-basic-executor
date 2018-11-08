@@ -1,0 +1,48 @@
+{
+  "name": "augur-dispute-crowdsourcer-basic-executor",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Executor.",
+  "author": "Daniil Burdakov <icqkill@gmail.com>",
+  "license": "MIT",
+  "devDependencies": {
+    "@babel/cli": "^7.1.5",
+    "@babel/core": "^7.1.5",
+    "@babel/node": "^7.0.0",
+    "@babel/preset-env": "^7.1.5",
+    "babel-core": "^7.0.0-bridge.0",
+    "babel-eslint": "^10.0.1",
+    "babel-jest": "^23.6.0",
+    "eslint": "5.6.0",
+    "eslint-config-prettier": "^3.1.0",
+    "eslint-config-react-app": "^3.0.5",
+    "eslint-plugin-flow-header": "^0.2.0",
+    "eslint-plugin-flowtype": "^3.2.0",
+    "eslint-plugin-import": "^2.14.0",
+    "eslint-plugin-jsx-a11y": "^6.1.2",
+    "eslint-plugin-prettier": "^3.0.0",
+    "eslint-plugin-react": "^7.11.1",
+    "eslint-watch": "^4.0.2",
+    "flow-bin": "^0.85.0",
+    "flow-typed": "^2.5.1",
+    "jest": "^23.6.0",
+    "prettier": "^1.14.3"
+  },
+  "dependencies": {
+    "augur-core": "^1.1.0",
+    "augur-dispute-crowdsourcer": "https://github.com/burdakovd/augur-dispute-crowdsourcer#1c1bb5d598e260684ab7f3913b5f4fd79fb54d0e",
+    "augur.js": "^5.6.0",
+    "immutable": "FormAPI/immutable-js#v3.8.1-flow-fix",
+    "invariant": "^2.2.4",
+    "moment": "^2.22.2",
+    "nullthrows": "^1.1.0",
+    "web3": "1.0.0-beta.33"
+  },
+  "scripts": {
+    "dev": "yarn babel-node src/index.js",
+    "start": "yarn node build/index.js",
+    "build": "yarn babel src --out-dir build",
+    "lint": "yarn eslint src",
+    "test": "yarn jest"
+  }
+}
