@@ -9,6 +9,7 @@
     "@babel/cli": "^7.1.5",
     "@babel/core": "^7.1.5",
     "@babel/node": "^7.0.0",
+    "@babel/plugin-transform-flow-strip-types": "^7.0.0",
     "@babel/preset-env": "^7.1.5",
     "babel-core": "^7.0.0-bridge.0",
     "babel-eslint": "^10.0.1",
@@ -32,15 +33,17 @@
     "augur-core": "^1.1.0",
     "augur-dispute-crowdsourcer": "https://github.com/burdakovd/augur-dispute-crowdsourcer#1c1bb5d598e260684ab7f3913b5f4fd79fb54d0e",
     "augur.js": "^5.6.0",
+    "fs-extra": "^7.0.1",
     "immutable": "FormAPI/immutable-js#v3.8.1-flow-fix",
     "invariant": "^2.2.4",
     "moment": "^2.22.2",
     "nullthrows": "^1.1.0",
-    "web3": "1.0.0-beta.33"
+    "web3": "1.0.0-beta.33",
+    "yargs": "^12.0.2"
   },
   "scripts": {
     "dev": "yarn babel-node src/index.js",
-    "start": "yarn node build/index.js",
+    "start": "node build/index.js",
     "build": "yarn babel src --out-dir build",
     "lint": "yarn eslint src",
     "test": "yarn jest"

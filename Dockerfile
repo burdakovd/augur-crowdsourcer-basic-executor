@@ -8,9 +8,14 @@ ADD yarn.lock ./
 
 RUN yarn install
 
-ADD .babelrc ./.babelrc
-ADD src ./src
+RUN mkdir /src/config
+ADD ./config/config.json /src/config/
+VOLUME /src/config
+
+ADD .babelrc /src/.babelrc
+ADD src /src/src
 
 RUN yarn build
 
-ENTRYPOINT yarn start
+ENTRYPOINT ["yarn", "start"]
+CMD []
