@@ -15,3 +15,10 @@ script:
   - yarn build
   - git clean -dfx
   - docker build . -t augur_dispute_pool_executor
+
+after_success:
+  - if [ "$TRAVIS_BRANCH" == "master" ]; then
+      docker login -u="$DOCKER_PUSH_USER" -p="$DOCKER_PUSH_PASSWORD";
+      docker tag augur_dispute_pool_executor augurdisputecrowdsourcer/basic-executor;
+      docker push augurdisputecrowdsourcer/basic-executor;
+    fi
