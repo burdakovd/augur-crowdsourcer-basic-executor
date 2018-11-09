@@ -4,13 +4,39 @@ import * as fs from "fs-extra";
 import invariant from "invariant";
 import { Map as ImmMap, List as ImmList } from "immutable";
 
-const STATE_VERSION = 1;
+const STATE_VERSION = 2;
 
 export type Address = string;
 export type State = {|
   version: number,
-  markets: ImmMap<Address, {| numOutcomes: number |}>
+  markets: ImmMap<
+    Address,
+    {|
+      numOutcomes: number,
+      isOver: boolean,
+      crowdsourcers: ImmMap<
+        string,
+        {|
+          feeWindowID: number,
+          invalid: boolean,
+          numerators: ImmList<number>,
+          address: Address
+        |}
+      >
+    |}
+  >
 |};
+
+export function stringifyCrowdsourcerSignature(
+  feeWindowID: number,
+  invalid: boolean,
+  numerators: ImmList<number>
+): string {
+  return `${feeWindowID}:${invalid.toString()}:${numerators.size}:${numerators
+    .map(n => n.toString())
+    .toArray()
+    .join(",")}`;
+}
 
 export function getInitialState(): State {
   return {
@@ -26,9 +52,15 @@ export function serializeState(state: State): string {
   );
   return JSON.stringify({
     version: state.version,
-    markets: ImmList(state.markets.entrySeq())
-      .sort()
-      .toArray()
+    markets: state.markets
+      .map(({ numOutcomes, isOver, crowdsourcers }) => ({
+        numOutcomes,
+        isOver,
+        crowdsourcers: crowdsourcers
+          .map(o => ({ ...o, numerators: o.numerators.toArray() }))
+          .toObject()
+      }))
+      .toObject()
   });
 }
 
@@ -44,7 +76,14 @@ export function deserializeState(blob: string): ?State {
 
   const state = {
     version,
-    markets: ImmMap(markets)
+    markets: ImmMap(markets).map(({ numOutcomes, isOver, crowdsourcers }) => ({
+      numOutcomes,
+      isOver,
+      crowdsourcers: ImmMap(crowdsourcers).map(o => ({
+        ...o,
+        numerators: ImmList(o.numerators)
+      }))
+    }))
   };
   invariant(serializeState(state) === blob, "bad serde");
   return state;

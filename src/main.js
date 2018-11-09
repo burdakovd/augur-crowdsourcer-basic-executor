@@ -6,9 +6,15 @@ import loadConfig from "./config";
 import { loadState, serializeState, saveState } from "./state";
 import runIterationFactory from "./runIteration";
 import type { State } from "./state";
+import sleep from "sleep-promise";
 
 function summarize(state: State): void {
-  console.log(`Keeping track of ${state.markets.size} markets now`);
+  console.log(
+    `Keeping track of ${state.markets.size} markets and ${state.markets
+      .valueSeq()
+      .map(({ crowdsourcers }) => crowdsourcers.size)
+      .reduce((x, y) => x + y, 0)} pools now`
+  );
 }
 
 async function printConfig(argv): Promise<void> {
@@ -26,34 +32,34 @@ async function run(argv): Promise<void> {
   require("log-timestamp");
 
   const config = await loadConfig(argv.config);
-  var state = await loadState(argv.state);
+  var globalState = await loadState(argv.state);
 
-  var lastSavedState = serializeState(state);
+  summarize(globalState);
+
   const persist = async (state: State): Promise<void> => {
-    if (serializeState(state) === lastSavedState) {
+    if (serializeState(state) === serializeState(globalState)) {
       return;
     }
-    lastSavedState = serializeState(state);
     summarize(state);
     await saveState(state, argv.state + ".tmp");
     await fs.rename(argv.state + ".tmp", argv.state);
+    globalState = state;
     console.log("Persisted state");
   };
 
   const runIteration = await runIterationFactory(config, persist);
 
-  await persist(state);
-
   var i = 0;
   while (true) {
     try {
       console.log(`Running iteration ${i}`);
-      state = await runIteration(state);
+      globalState = await runIteration(globalState);
       console.log(`Finished iteration ${i}`);
-      await persist(state);
+      await persist(globalState);
     } catch (e) {
       console.error(`Failed iteration ${i}`);
       console.error(e.stack);
+      await sleep(10000);
     }
     i += 1;
   }

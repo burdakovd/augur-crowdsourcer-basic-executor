@@ -1,19 +1,18 @@
 // @flow
 
 import type { Config } from "./config";
-import type { State } from "./state";
+import type { State, Address } from "./state";
 import { addMarket } from "./reducers";
 import AugurCoreABI from "augur-core/output/contracts/abi.json";
-import { Set as ImmSet } from "immutable";
+import CrowdsourcerFactory from "augur-dispute-crowdsourcer/build/contracts/CrowdsourcerFactory.json";
+import { Set as ImmSet, Range as ImmRange, List as ImmList } from "immutable";
 import sleep from "sleep-promise";
 import Augur from "augur.js";
 import Web3 from "web3";
+import nullthrows from "nullthrows";
+import { stringifyCrowdsourcerSignature } from "./state";
 
-async function findMarkets(
-  augur: Augur,
-  web3: Web3,
-  state: State
-): Promise<State> {
+async function getUniverseAddress(augur: Augur): Promise<Address> {
   const syncData = await new Promise((resolve, reject) =>
     augur.augurNode.getSyncData(function(error, result) {
       if (error) {
@@ -23,13 +22,24 @@ async function findMarkets(
       }
     })
   );
-  const addresses = await Promise.all(
+
+  return syncData.addresses.Universe;
+}
+
+async function findMarkets(
+  augur: Augur,
+  web3: Web3,
+  state: State
+): Promise<State> {
+  const universeAddress = await getUniverseAddress(augur);
+
+  const addresses: ImmSet<string> = await Promise.all(
     ["CROWDSOURCING_DISPUTE", "AWAITING_NEXT_WINDOW"].map(
       state =>
         new Promise((resolve, reject) =>
           augur.markets.getMarkets(
             {
-              universe: syncData.addresses.Universe,
+              universe: universeAddress,
               reportingState: state
             },
             function(error, result) {
@@ -42,7 +52,11 @@ async function findMarkets(
           )
         )
     )
-  ).then(([x, y]) => ImmSet.of(...x, ...y));
+  ).then(a =>
+    ImmList(a)
+      .flatMap(x => x)
+      .toSet()
+  );
 
   const markets = await Promise.all(
     addresses
@@ -56,12 +70,24 @@ async function findMarkets(
           .getNumberOfOutcomes()
           .call()
           .then(Number.parseInt);
+
+        const numTicks = await new web3.eth.Contract(
+          AugurCoreABI.Market,
+          address
+        ).methods
+          .getNumTicks()
+          .call()
+          .then(Number.parseInt);
+
+        if (numTicks !== 10000) {
+          return null;
+        }
         return {
           address,
           numOutcomes
         };
       })
-  ).then(a => a.filter(x => x != null));
+  ).then(a => a.filter(x => x != null).map(x => nullthrows(x)));
 
   for (const market of markets) {
     console.log(`Discovered new market: ${market.address}`);
@@ -69,6 +95,151 @@ async function findMarkets(
       numOutcomes: market.numOutcomes
     });
   }
+
+  return state;
+}
+
+async function markIsOver(web3: Web3, state: State): Promise<State> {
+  await Promise.all(
+    state.markets
+      .map(async (data, address) => {
+        if (data.isOver) {
+          return;
+        }
+
+        const feeWindowAddress = await new web3.eth.Contract(
+          AugurCoreABI.Market,
+          address
+        ).methods
+          .getFeeWindow()
+          .call();
+
+        if (web3.utils.toBN(feeWindowAddress).eq(web3.utils.toBN(0))) {
+          return;
+        }
+
+        const feeWindowIsOver = await new web3.eth.Contract(
+          AugurCoreABI.FeeWindow,
+          feeWindowAddress
+        ).methods
+          .isOver()
+          .call();
+
+        if (feeWindowIsOver) {
+          state = {
+            ...state,
+            markets: state.markets.set(address, { ...data, isOver: true })
+          };
+        }
+      })
+      .valueSeq()
+      .toArray()
+  );
+
+  return state;
+}
+
+async function discoverCrowdsourcers(
+  augur: Augur,
+  web3: Web3,
+  state: State
+): Promise<State> {
+  const universeAddress = await getUniverseAddress(augur);
+  const disputeRoundDurationSeconds = await new web3.eth.Contract(
+    AugurCoreABI.Universe,
+    universeAddress
+  ).methods
+    .getDisputeRoundDurationInSeconds()
+    .call()
+    .then(Number.parseInt);
+
+  const now = Date.now() / 1000;
+  const currentFeeWindowID = Math.floor(now / disputeRoundDurationSeconds);
+
+  console.log(`We are in fee window ${currentFeeWindowID}`);
+
+  await Promise.all(
+    [currentFeeWindowID, currentFeeWindowID + 1].map(
+      async targetFeeWindowID =>
+        await Promise.all(
+          state.markets
+            .map(async (marketData, address) => {
+              if (marketData.isOver) {
+                return;
+              }
+
+              await Promise.all(
+                ImmList(ImmRange(0, marketData.numOutcomes))
+                  .push(null)
+                  .map(async outcomeIndex => {
+                    const invalid = outcomeIndex === null;
+                    const numTicks = 10000;
+                    const numerators = ImmRange(0, marketData.numOutcomes)
+                      .map(
+                        i =>
+                          invalid
+                            ? Math.floor(numTicks / marketData.numOutcomes)
+                            : i === outcomeIndex
+                              ? numTicks
+                              : 0
+                      )
+                      .toList();
+
+                    const key = stringifyCrowdsourcerSignature(
+                      targetFeeWindowID,
+                      invalid,
+                      numerators
+                    );
+
+                    if (marketData.crowdsourcers.has(key)) {
+                      return;
+                    }
+
+                    const poolAddress = await new web3.eth.Contract(
+                      CrowdsourcerFactory.abi,
+                      CrowdsourcerFactory.networks["1"].address
+                    ).methods
+                      .maybeGetCrowdsourcer(
+                        address,
+                        web3.utils.toHex(targetFeeWindowID),
+                        numerators.map(n => web3.utils.toHex(n)).toArray(),
+                        invalid
+                      )
+                      .call();
+
+                    if (web3.utils.toBN(poolAddress).eq(web3.utils.toBN(0))) {
+                      return;
+                    }
+
+                    console.log(
+                      `Discovered new pool ${poolAddress} for market ${address}, '${
+                        invalid ? "invalid" : "valid"
+                      }', payout numerators ${JSON.stringify(
+                        numerators.toArray()
+                      )}, fee window ${targetFeeWindowID}`
+                    );
+
+                    state = {
+                      ...state,
+                      markets: state.markets.update(address, marketData => ({
+                        ...marketData,
+                        crowdsourcers: marketData.crowdsourcers.set(key, {
+                          feeWindowID: targetFeeWindowID,
+                          invalid,
+                          numerators,
+                          address: poolAddress
+                        })
+                      }))
+                    };
+                  })
+                  .toArray()
+              );
+            })
+            .valueSeq()
+            .toArray()
+        )
+    )
+  );
 
   return state;
 }
@@ -81,6 +252,10 @@ async function runIteration(
   persist: State => Promise<void>
 ): Promise<State> {
   state = await findMarkets(augur, web3, state);
+  await persist(state);
+  state = await markIsOver(web3, state);
+  await persist(state);
+  state = await discoverCrowdsourcers(augur, web3, state);
   await persist(state);
 
   await sleep(10000);
