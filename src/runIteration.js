@@ -354,6 +354,11 @@ async function cleanupOldCrowdsourcers(
         }
 
         // if it is more than three windows old, clean it up
+        console.log(
+          `Cleaning up old crowdsourcer ${crowdsourcerKey} (${
+            crowdsourcerData.address
+          }) for market ${marketAddress}`
+        );
         state = {
           ...state,
           markets: state.markets.update(marketAddress, marketData => ({
@@ -363,6 +368,27 @@ async function cleanupOldCrowdsourcers(
         };
       }
     );
+  });
+
+  return state;
+}
+
+async function cleanupOldMarkets(state: State): Promise<State> {
+  state.markets.forEach(async (marketData, marketAddress) => {
+    if (!marketData.isOver) {
+      return;
+    }
+
+    if (marketData.crowdsourcers.size > 0) {
+      return;
+    }
+
+    console.log(`Cleaning up old market ${marketAddress}`);
+
+    state = {
+      ...state,
+      markets: state.markets.delete(marketAddress)
+    };
   });
 
   return state;
@@ -384,6 +410,8 @@ async function runIteration(
   state = await collectFees(augur, web3, config, state);
   await persist(state);
   state = await cleanupOldCrowdsourcers(augur, web3, state);
+  await persist(state);
+  state = await cleanupOldMarkets(state);
   await persist(state);
 
   await sleep(10000);
