@@ -1,4 +1,7 @@
 {
   "augurNode": "wss://augur-node.augur.casino",
-  "ethereumNode": "wss://gethnode.com/ws"
+  "ethereumNode": "wss://gethnode.com/ws",
+  "feeRecipient": "0x2404a39e447d0c8b417049fc42b468a26990b4cc",
+  "executionPrivateKey":
+    "b0bbead64973f7979adc40013411c3ab45727f88049ca9c79db9d35847ae33a1"
 }

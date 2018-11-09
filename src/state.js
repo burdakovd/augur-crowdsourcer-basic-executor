@@ -20,7 +20,8 @@ export type State = {|
           feeWindowID: number,
           invalid: boolean,
           numerators: ImmList<number>,
-          address: Address
+          address: Address,
+          disputer: Address
         |}
       >
     |}

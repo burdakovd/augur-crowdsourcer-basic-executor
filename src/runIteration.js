@@ -5,6 +5,8 @@ import type { State, Address } from "./state";
 import { addMarket } from "./reducers";
 import AugurCoreABI from "augur-core/output/contracts/abi.json";
 import CrowdsourcerFactory from "augur-dispute-crowdsourcer/build/contracts/CrowdsourcerFactory.json";
+import Crowdsourcer from "augur-dispute-crowdsourcer/build/contracts/Crowdsourcer.json";
+import Disputer from "augur-dispute-crowdsourcer/build/contracts/Disputer.json";
 import { Set as ImmSet, Range as ImmRange, List as ImmList } from "immutable";
 import sleep from "sleep-promise";
 import Augur from "augur.js";
@@ -99,7 +101,7 @@ async function findMarkets(
   return state;
 }
 
-async function markIsOver(web3: Web3, state: State): Promise<State> {
+async function markMarketIsOver(web3: Web3, state: State): Promise<State> {
   await Promise.all(
     state.markets
       .map(async (data, address) => {
@@ -217,6 +219,23 @@ async function discoverCrowdsourcers(
                       return;
                     }
 
+                    const crowdsourcer = new web3.eth.Contract(
+                      Crowdsourcer.abi,
+                      poolAddress
+                    );
+
+                    const isInitialized = await crowdsourcer.methods
+                      .isInitialized()
+                      .call();
+
+                    if (!isInitialized()) {
+                      return;
+                    }
+
+                    const disputer = await crowdsourcer.methods
+                      .getDisputer()
+                      .call();
+
                     console.log(
                       `Discovered new pool ${poolAddress} for market ${address}, '${
                         invalid ? "invalid" : "valid"
@@ -233,7 +252,8 @@ async function discoverCrowdsourcers(
                           feeWindowID: targetFeeWindowID,
                           invalid,
                           numerators,
-                          address: poolAddress
+                          address: poolAddress,
+                          disputer: disputer
                         })
                       }))
                     };
@@ -250,6 +270,74 @@ async function discoverCrowdsourcers(
   return state;
 }
 
+async function collectFees(
+  augur: Augur,
+  web3: Web3,
+  config: Config,
+  state: State
+): Promise<State> {
+  const currentFeeWindowID = await getCurrentFeeWindowID(augur, web3);
+
+  await Promise.all(
+    state.markets
+      .map(async (marketData, marketAddress) => {
+        const crowdsourcers = marketData.crowdsourcers;
+
+        await Promise.all(
+          crowdsourcers
+            .map(async (crowdsourcerData, crowdsourcerKey) => {
+              if (crowdsourcerData.feeWindowID > currentFeeWindowID) {
+                return;
+              }
+
+              const crowdsourcer = new web3.eth.Contract(
+                Crowdsourcer.abi,
+                crowdsourcerData.address
+              );
+
+              const disputer = new web3.eth.Contract(
+                Crowdsourcer.abi,
+                crowdsourcerData.disputer
+              );
+
+              const feesCollected = await crowdsourcer.methods
+                .m_feesCollected()
+                .call();
+
+              if (feesCollected) {
+                return;
+              }
+
+              const feeRecipient = await disputer.methods
+                .m_feeReceiver()
+                .call();
+
+              if (feeRecipient !== config.feeRecipient) {
+                return;
+              }
+
+              console.log(
+                `Sending transaction to collect fees from ${
+                  crowdsourcerData.address
+                } (market ${marketAddress})`
+              );
+
+              await crowdsourcer.methods.withdrawFees().send();
+
+              // sleep some time to avoid race conditions that will cause to
+              // send transaction twice on certain pools
+              await sleep(60000);
+            })
+            .toArray()
+        );
+      })
+      .valueSeq()
+      .toArray()
+  );
+
+  return state;
+}
+
 async function runIteration(
   augur: Augur,
   web3: Web3,
@@ -259,9 +347,11 @@ async function runIteration(
 ): Promise<State> {
   state = await findMarkets(augur, web3, state);
   await persist(state);
-  state = await markIsOver(web3, state);
+  state = await markMarketIsOver(web3, state);
   await persist(state);
   state = await discoverCrowdsourcers(augur, web3, state);
+  await persist(state);
+  state = await collectFees(augur, web3, config, state);
   await persist(state);
 
   await sleep(10000);
@@ -279,6 +369,14 @@ async function runIterationFactory(
       ? Web3.providers.WebsocketProvider
       : Web3.providers.HttpProvider)(config.ethereumNode)
   );
+
+  const account = web3.eth.accounts.privateKeyToAccount(
+    "0x" + config.executionPrivateKey
+  );
+  web3.eth.accounts.wallet.add(account);
+  web3.eth.defaultAccount = account.address;
+
+  console.log(`Using account ${account.address} for execution`);
 
   await new Promise((resolve, reject) =>
     augur.connect(
