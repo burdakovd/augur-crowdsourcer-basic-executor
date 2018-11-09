@@ -328,12 +328,42 @@ async function collectFees(
               // send transaction twice on certain pools
               await sleep(60000);
             })
+            .valueSeq()
             .toArray()
         );
       })
       .valueSeq()
       .toArray()
   );
+
+  return state;
+}
+
+async function cleanupOldCrowdsourcers(
+  augur: Augur,
+  web3: Web3,
+  state: State
+): Promise<State> {
+  const currentFeeWindowID = await getCurrentFeeWindowID(augur, web3);
+
+  state.markets.forEach(async (marketData, marketAddress) => {
+    marketData.crowdsourcers.forEach(
+      async (crowdsourcerData, crowdsourcerKey) => {
+        if (crowdsourcerData.feeWindowID >= currentFeeWindowID - 3) {
+          return;
+        }
+
+        // if it is more than three windows old, clean it up
+        state = {
+          ...state,
+          markets: state.markets.update(marketAddress, marketData => ({
+            ...marketData,
+            crowdsourcers: marketData.crowdsourcers.delete(crowdsourcerKey)
+          }))
+        };
+      }
+    );
+  });
 
   return state;
 }
@@ -352,6 +382,8 @@ async function runIteration(
   state = await discoverCrowdsourcers(augur, web3, state);
   await persist(state);
   state = await collectFees(augur, web3, config, state);
+  await persist(state);
+  state = await cleanupOldCrowdsourcers(augur, web3, state);
   await persist(state);
 
   await sleep(10000);
