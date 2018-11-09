@@ -1,10 +1,17 @@
 // @flow
 
-import { Set as ImmSet } from "immutable";
+import { Map as ImmMap } from "immutable";
 import type { State, Address } from "./state";
 
-export function addMarket(state: State, market: Address) {
-  const newMarkets: ImmSet<Address> = state.markets.add(market);
+export function addMarket(
+  state: State,
+  market: Address,
+  { numOutcomes }: {| numOutcomes: number |}
+) {
+  const newMarkets: ImmMap<
+    Address,
+    {| numOutcomes: number |}
+  > = state.markets.set(market, { numOutcomes });
   return {
     ...state,
     markets: newMarkets

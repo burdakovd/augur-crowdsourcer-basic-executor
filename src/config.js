@@ -3,7 +3,8 @@
 import * as fs from "fs-extra";
 
 export type Config = {|
-  augurNode: string
+  augurNode: string,
+  ethereumNode: string
 |};
 
 async function loadConfig(path: string): Promise<Config> {

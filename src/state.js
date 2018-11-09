@@ -2,31 +2,49 @@
 
 import * as fs from "fs-extra";
 import invariant from "invariant";
-import { Set as ImmSet, List as ImmList } from "immutable";
+import { Map as ImmMap, List as ImmList } from "immutable";
+
+const STATE_VERSION = 1;
 
 export type Address = string;
 export type State = {|
-  markets: ImmSet<Address>
+  version: number,
+  markets: ImmMap<Address, {| numOutcomes: number |}>
 |};
 
 export function getInitialState(): State {
   return {
-    markets: ImmSet()
+    version: STATE_VERSION,
+    markets: ImmMap()
   };
 }
 
 export function serializeState(state: State): string {
+  invariant(
+    state.version === STATE_VERSION,
+    "do not know how to serialize this"
+  );
   return JSON.stringify({
-    markets: ImmList(state.markets)
+    version: state.version,
+    markets: ImmList(state.markets.entrySeq())
       .sort()
       .toArray()
   });
 }
 
-export function deserializeState(blob: string): State {
-  const { markets } = JSON.parse(blob);
+export function deserializeState(blob: string): ?State {
+  const { version, markets } = JSON.parse(blob);
+
+  if (version !== STATE_VERSION) {
+    console.log(
+      `Deserialized state of wrong version ${version}, while we know ${STATE_VERSION}, discarding.`
+    );
+    return null;
+  }
+
   const state = {
-    markets: ImmSet(markets)
+    version,
+    markets: ImmMap(markets)
   };
   invariant(serializeState(state) === blob, "bad serde");
   return state;
@@ -37,10 +55,15 @@ export async function loadState(path: string): Promise<State> {
 
   if (exists) {
     const string = await fs.readFile(path, "utf8");
-    return deserializeState(string);
-  } else {
-    return getInitialState();
+    const deserialized = deserializeState(string);
+
+    if (deserialized != null) {
+      return deserialized;
+    }
   }
+
+  console.log(`Falling back to initial state`);
+  return getInitialState();
 }
 
 export async function saveState(state: State, path: string): Promise<void> {

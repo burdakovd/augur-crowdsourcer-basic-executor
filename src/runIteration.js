@@ -3,11 +3,17 @@
 import type { Config } from "./config";
 import type { State } from "./state";
 import { addMarket } from "./reducers";
-import { List as ImmList } from "immutable";
+import AugurCoreABI from "augur-core/output/contracts/abi.json";
+import { Set as ImmSet } from "immutable";
 import sleep from "sleep-promise";
 import Augur from "augur.js";
+import Web3 from "web3";
 
-async function findMarkets(augur: Augur, state: State): Promise<State> {
+async function findMarkets(
+  augur: Augur,
+  web3: Web3,
+  state: State
+): Promise<State> {
   const syncData = await new Promise((resolve, reject) =>
     augur.augurNode.getSyncData(function(error, result) {
       if (error) {
@@ -17,7 +23,7 @@ async function findMarkets(augur: Augur, state: State): Promise<State> {
       }
     })
   );
-  const marketsReceived = await Promise.all(
+  const addresses = await Promise.all(
     ["CROWDSOURCING_DISPUTE", "AWAITING_NEXT_WINDOW"].map(
       state =>
         new Promise((resolve, reject) =>
@@ -36,13 +42,32 @@ async function findMarkets(augur: Augur, state: State): Promise<State> {
           )
         )
     )
-  ).then(([x, y]) => ImmList.of(...x, ...y));
+  ).then(([x, y]) => ImmSet.of(...x, ...y));
 
-  for (const address of marketsReceived) {
-    if (!state.markets.contains(address)) {
-      console.log(`Discovered new market: ${address}`);
-      state = addMarket(state, address);
-    }
+  const markets = await Promise.all(
+    addresses
+      .toArray()
+      .filter(address => !state.markets.has(address))
+      .map(async address => {
+        const numOutcomes = await new web3.eth.Contract(
+          AugurCoreABI.Market,
+          address
+        ).methods
+          .getNumberOfOutcomes()
+          .call()
+          .then(Number.parseInt);
+        return {
+          address,
+          numOutcomes
+        };
+      })
+  ).then(a => a.filter(x => x != null));
+
+  for (const market of markets) {
+    console.log(`Discovered new market: ${market.address}`);
+    state = addMarket(state, market.address, {
+      numOutcomes: market.numOutcomes
+    });
   }
 
   return state;
@@ -50,11 +75,12 @@ async function findMarkets(augur: Augur, state: State): Promise<State> {
 
 async function runIteration(
   augur: Augur,
+  web3: Web3,
   config: Config,
   state: State,
   persist: State => Promise<void>
 ): Promise<State> {
-  state = await findMarkets(augur, state);
+  state = await findMarkets(augur, web3, state);
   await persist(state);
 
   await sleep(10000);
@@ -66,6 +92,12 @@ async function runIterationFactory(
   persist: State => Promise<void>
 ): Promise<(state: State) => Promise<State>> {
   const augur = new Augur();
+
+  const web3 = new Web3(
+    new (config.ethereumNode.startsWith("ws")
+      ? Web3.providers.WebsocketProvider
+      : Web3.providers.HttpProvider)(config.ethereumNode)
+  );
 
   await new Promise((resolve, reject) =>
     augur.connect(
@@ -80,7 +112,7 @@ async function runIterationFactory(
     )
   );
 
-  return state => runIteration(augur, config, state, persist);
+  return state => runIteration(augur, web3, config, state, persist);
 }
 
 export default runIterationFactory;

@@ -1,3 +1,4 @@
 {
-  "augurNode": "wss://augur-node.augur.casino"
+  "augurNode": "wss://augur-node.augur.casino",
+  "ethereumNode": "wss://gethnode.com/ws"
 }
