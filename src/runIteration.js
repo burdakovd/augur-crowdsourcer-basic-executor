@@ -11,6 +11,8 @@ import { Set as ImmSet, Range as ImmRange, List as ImmList } from "immutable";
 import sleep from "sleep-promise";
 import Augur from "augur.js";
 import Web3 from "web3";
+import HDWalletProvider from "truffle-hdwallet-provider-privkey";
+import NonceTrackerSubprovider from "web3-provider-engine/subproviders/nonce-tracker";
 import nullthrows from "nullthrows";
 import { stringifyCrowdsourcerSignature } from "./state";
 
@@ -521,17 +523,19 @@ async function runIterationFactory(
 ): Promise<(state: State) => Promise<State>> {
   const augur = new Augur();
 
-  const web3 = new Web3(
-    new (config.ethereumNode.startsWith("ws")
-      ? Web3.providers.WebsocketProvider
-      : Web3.providers.HttpProvider)(config.ethereumNode)
+  const wallet = new HDWalletProvider(
+    [config.executionPrivateKey],
+    config.ethereumNode
   );
+  const nonceTracker = new NonceTrackerSubprovider();
+  wallet.engine._providers.unshift(nonceTracker);
+  nonceTracker.setEngine(wallet.engine);
 
-  // TODO: nonce-tracker (from truffle-config.js)
+  const web3 = new Web3(wallet);
+
   const account = web3.eth.accounts.privateKeyToAccount(
     "0x" + config.executionPrivateKey
   );
-  web3.eth.accounts.wallet.add(account);
   web3.eth.defaultAccount = account.address;
 
   console.log(`Using account ${account.address} for execution`);
