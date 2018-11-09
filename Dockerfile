@@ -9,7 +9,7 @@ ADD yarn.lock ./
 RUN yarn install
 
 RUN mkdir /src/config
-ADD ./config/config.json /src/config/
+ADD ./config/config.example.json /src/config/
 VOLUME /src/config
 
 ADD .babelrc /src/.babelrc
