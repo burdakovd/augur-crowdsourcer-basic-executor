@@ -139,11 +139,10 @@ async function markIsOver(web3: Web3, state: State): Promise<State> {
   return state;
 }
 
-async function discoverCrowdsourcers(
+async function getCurrentFeeWindowID(
   augur: Augur,
-  web3: Web3,
-  state: State
-): Promise<State> {
+  web3: Web3
+): Promise<number> {
   const universeAddress = await getUniverseAddress(augur);
   const disputeRoundDurationSeconds = await new web3.eth.Contract(
     AugurCoreABI.Universe,
@@ -154,8 +153,15 @@ async function discoverCrowdsourcers(
     .then(Number.parseInt);
 
   const now = Date.now() / 1000;
-  const currentFeeWindowID = Math.floor(now / disputeRoundDurationSeconds);
+  return Math.floor(now / disputeRoundDurationSeconds);
+}
 
+async function discoverCrowdsourcers(
+  augur: Augur,
+  web3: Web3,
+  state: State
+): Promise<State> {
+  const currentFeeWindowID = await getCurrentFeeWindowID(augur, web3);
   console.log(`We are in fee window ${currentFeeWindowID}`);
 
   await Promise.all(
