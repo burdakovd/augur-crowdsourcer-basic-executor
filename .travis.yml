@@ -15,7 +15,7 @@ script:
   - yarn build
   - git clean -dfx
   - docker build . -t augur_dispute_pool_executor
-  - mkdir demo_config && cp config/config.json demo_config/
+  - mkdir demo_config && cp config/config.example.json demo_config/config.json
   - docker run -v $(pwd)/demo_config:/src/config augur_dispute_pool_executor printConfig
 
 after_success:

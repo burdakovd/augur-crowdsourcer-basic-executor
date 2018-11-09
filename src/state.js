@@ -1,6 +1,6 @@
 // @flow
 
-import fs from "fs-extra";
+import * as fs from "fs-extra";
 import invariant from "invariant";
 import { Set as ImmSet, List as ImmList } from "immutable";
 
@@ -36,9 +36,13 @@ export async function loadState(path: string): Promise<State> {
   const exists = await fs.pathExists(path);
 
   if (exists) {
-    const string = await fs.readFile(path);
+    const string = await fs.readFile(path, "utf8");
     return deserializeState(string);
   } else {
     return getInitialState();
   }
+}
+
+export async function saveState(state: State, path: string): Promise<void> {
+  await fs.writeFile(path, serializeState(state), { encoding: "utf8" });
 }

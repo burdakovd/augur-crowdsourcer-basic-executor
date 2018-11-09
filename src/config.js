@@ -1,11 +1,13 @@
 // @flow
 
-import fs from "fs-extra";
+import * as fs from "fs-extra";
 
-export type Config = {||};
+export type Config = {|
+  augurNode: string
+|};
 
 async function loadConfig(path: string): Promise<Config> {
-  const string = await fs.readFile(path);
+  const string = await fs.readFile(path, "utf8");
   return JSON.parse(string);
 }
 
