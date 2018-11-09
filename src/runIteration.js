@@ -228,7 +228,7 @@ async function discoverCrowdsourcers(
                       .isInitialized()
                       .call();
 
-                    if (!isInitialized()) {
+                    if (!isInitialized) {
                       return;
                     }
 
@@ -296,7 +296,7 @@ async function collectFees(
               );
 
               const disputer = new web3.eth.Contract(
-                Crowdsourcer.abi,
+                Disputer.abi,
                 crowdsourcerData.disputer
               );
 
@@ -312,7 +312,9 @@ async function collectFees(
                 .m_feeReceiver()
                 .call();
 
-              if (feeRecipient !== config.feeRecipient) {
+              if (
+                feeRecipient.toLowerCase() !== config.feeRecipient.toLowerCase()
+              ) {
                 return;
               }
 
@@ -322,7 +324,16 @@ async function collectFees(
                 } (market ${marketAddress})`
               );
 
-              await crowdsourcer.methods.withdrawFees().send();
+              await crowdsourcer.methods.withdrawFees().send({
+                from: web3.eth.defaultAccount,
+                gas: 3000000
+              });
+
+              console.log(
+                `Mined transaction to collect fees from ${
+                  crowdsourcerData.address
+                } (market ${marketAddress})`
+              );
 
               // sleep some time to avoid race conditions that will cause to
               // send transaction twice on certain pools
@@ -394,6 +405,87 @@ async function cleanupOldMarkets(state: State): Promise<State> {
   return state;
 }
 
+async function runDisputes(
+  augur: Augur,
+  web3: Web3,
+  config: Config,
+  state: State,
+  persist: State => Promise<void>
+): Promise<State> {
+  const currentFeeWindowID = await getCurrentFeeWindowID(augur, web3);
+  const targetFeeWindowID = currentFeeWindowID;
+
+  // TODO: if we are about to start next window, do countdown
+
+  await Promise.all(
+    state.markets
+      .map(async (marketData, marketAddress) => {
+        await Promise.all(
+          marketData.crowdsourcers
+            .map(async (crowdsourcerData, crowdsourcerKey) => {
+              if (crowdsourcerData.feeWindowID !== targetFeeWindowID) {
+                return;
+              }
+
+              const crowdsourcer = new web3.eth.Contract(
+                Crowdsourcer.abi,
+                crowdsourcerData.address
+              );
+
+              const hasDisputed = await crowdsourcer.methods
+                .hasDisputed()
+                .call();
+
+              if (hasDisputed) {
+                return;
+              }
+
+              const disputer = new web3.eth.Contract(
+                Disputer.abi,
+                crowdsourcerData.disputer
+              );
+
+              const standardGasPrice = await web3.eth.getGasPrice();
+              const premiumGasPrice = web3.utils
+                .toBN(standardGasPrice)
+                .mul(web3.utils.toBN(4))
+                .toString();
+              console.log(
+                `Running dispute transaction for disputer ${
+                  crowdsourcerData.disputer
+                }, market ${marketAddress}, using increased gas price ${premiumGasPrice /
+                  1e9} gwei`
+              );
+
+              // todo: protect against bad pools, filter input data,
+              // and do not dispute more than once
+
+              await disputer.methods.dispute(config.feeRecipient).send({
+                gas: 3000000,
+                gasPrice: premiumGasPrice,
+                from: web3.eth.defaultAccount
+              });
+
+              console.log(
+                `Done dispute transaction for disputer ${
+                  crowdsourcerData.disputer
+                }, market ${marketAddress}`
+              );
+
+              // sleep 60 seconds to avoid various race conditions
+              await sleep(60000);
+            })
+            .valueSeq()
+            .toArray()
+        );
+      })
+      .valueSeq()
+      .toArray()
+  );
+
+  return state;
+}
+
 async function runIteration(
   augur: Augur,
   web3: Web3,
@@ -401,17 +493,22 @@ async function runIteration(
   state: State,
   persist: State => Promise<void>
 ): Promise<State> {
+  // TODO: if we are about to start next window, go straight to runDisputes
+
   state = await findMarkets(augur, web3, state);
   await persist(state);
   state = await markMarketIsOver(web3, state);
   await persist(state);
   state = await discoverCrowdsourcers(augur, web3, state);
   await persist(state);
+  // TODO: do not start collectFees if we have less than 48 hours before next window
   state = await collectFees(augur, web3, config, state);
   await persist(state);
   state = await cleanupOldCrowdsourcers(augur, web3, state);
   await persist(state);
   state = await cleanupOldMarkets(state);
+  await persist(state);
+  state = await runDisputes(augur, web3, config, state, persist);
   await persist(state);
 
   await sleep(10000);
@@ -430,6 +527,7 @@ async function runIterationFactory(
       : Web3.providers.HttpProvider)(config.ethereumNode)
   );
 
+  // TODO: nonce-tracker (from truffle-config.js)
   const account = web3.eth.accounts.privateKeyToAccount(
     "0x" + config.executionPrivateKey
   );
