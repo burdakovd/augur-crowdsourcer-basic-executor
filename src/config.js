@@ -9,7 +9,11 @@ export type Config = {|
   executionAccount: string,
   executionPrivateKey: string,
   feeCollectionTriggerAccount: string,
-  feeCollectionTriggerPrivateKey: string
+  feeCollectionTriggerPrivateKey: string,
+  minGasPrice: number,
+  maxGasPrice: number,
+  aggressiveness: number,
+  mockFeeWindowEnd: ?number
 |};
 
 async function loadConfig(path: string): Promise<Config> {
