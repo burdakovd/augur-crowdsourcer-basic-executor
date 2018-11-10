@@ -475,75 +475,92 @@ async function runDisputes(
   state: State,
   persist: State => Promise<void>
 ): Promise<State> {
-  const currentFeeWindowID = await getCurrentFeeWindowID(web3);
-  const targetFeeWindowID = currentFeeWindowID;
+  const currentFeeWindowID_DO_NOT_USE = await getCurrentFeeWindowID(web3);
+  const targetFeeWindowID = currentFeeWindowID_DO_NOT_USE;
 
   // TODO: if we are about to start next window, do countdown
 
-  await Promise.all(
+  const runners = await Promise.all(
     state.markets
-      .map(async (marketData, marketAddress) => {
-        await Promise.all(
-          marketData.crowdsourcers
-            .map(async (crowdsourcerData, crowdsourcerKey) => {
-              if (crowdsourcerData.feeWindowID !== targetFeeWindowID) {
-                return;
-              }
+      .map(
+        async (marketData, marketAddress): Promise<?() => Promise<void>> => {
+          await Promise.all(
+            marketData.crowdsourcers
+              .map(async (crowdsourcerData, crowdsourcerKey) => {
+                if (crowdsourcerData.feeWindowID !== targetFeeWindowID) {
+                  return null;
+                }
 
-              const crowdsourcer = new web3.eth.Contract(
-                Crowdsourcer.abi,
-                crowdsourcerData.address
-              );
+                const crowdsourcer = new web3.eth.Contract(
+                  Crowdsourcer.abi,
+                  crowdsourcerData.address
+                );
 
-              const hasDisputed = await crowdsourcer.methods
-                .hasDisputed()
-                .call();
+                const hasDisputed = await crowdsourcer.methods
+                  .hasDisputed()
+                  .call();
 
-              if (hasDisputed) {
-                return;
-              }
+                if (hasDisputed) {
+                  return null;
+                }
 
-              const disputer = new web3.eth.Contract(
-                Disputer.abi,
-                crowdsourcerData.disputer
-              );
+                // CHECK:
+                // 1. numParticipants
+                // 2. Tentative outcome
+                // 3. Expected dispute size, and expected fee => gas
 
-              const standardGasPrice = await web3.eth.getGasPrice();
-              const premiumGasPrice = web3.utils
-                .toBN(standardGasPrice)
-                .mul(web3.utils.toBN(4))
-                .toString();
-              console.log(
-                `Running dispute transaction for disputer ${
+                const disputer = new web3.eth.Contract(
+                  Disputer.abi,
                   crowdsourcerData.disputer
-                }, market ${marketAddress}, using increased gas price ${premiumGasPrice /
-                  1e9} gwei`
-              );
+                );
 
-              // todo: protect against bad pools, filter input data,
-              // and do not dispute more than once
+                const standardGasPrice = await web3.eth.getGasPrice();
+                const premiumGasPrice = web3.utils
+                  .toBN(standardGasPrice)
+                  .mul(web3.utils.toBN(4))
+                  .toString();
+                console.log(
+                  `Running dispute transaction for disputer ${
+                    crowdsourcerData.disputer
+                  }, market ${marketAddress}, using increased gas price ${premiumGasPrice /
+                    1e9} gwei`
+                );
 
-              await disputer.methods.dispute(config.feeRecipient).send({
-                gas: 3000000,
-                gasPrice: premiumGasPrice,
-                from: config.executionAccount
-              });
+                // todo: protect against bad pools, filter input data,
+                // and do not dispute more than once
 
-              console.log(
-                `Done dispute transaction for disputer ${
-                  crowdsourcerData.disputer
-                }, market ${marketAddress}`
-              );
+                return async () => {
+                  await disputer.methods.dispute(config.feeRecipient).send({
+                    gas: 3000000,
+                    gasPrice: premiumGasPrice,
+                    from: config.executionAccount
+                  });
 
-              // sleep 60 seconds to avoid various race conditions
-              await sleep(60000);
-            })
-            .valueSeq()
-            .toArray()
-        );
-      })
+                  console.log(
+                    `Done dispute transaction for disputer ${
+                      crowdsourcerData.disputer
+                    }, market ${marketAddress}`
+                  );
+
+                  // sleep 60 seconds to avoid various race conditions
+                  await sleep(60000);
+                };
+              })
+              .valueSeq()
+              .toArray()
+          );
+        }
+      )
       .valueSeq()
       .toArray()
+  );
+
+  await Promise.all(
+    runners.map(async r => {
+      if (r != null) {
+        await r();
+      }
+    })
   );
 
   return state;
