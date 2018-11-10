@@ -1042,9 +1042,9 @@ augur-core@1.1.0, augur-core@^1.1.0:
     solidity-coverage "0.5.4"
     yargs "11.0.0"
 
-"augur-dispute-crowdsourcer@https://github.com/burdakovd/augur-dispute-crowdsourcer#1c1bb5d598e260684ab7f3913b5f4fd79fb54d0e":
+"augur-dispute-crowdsourcer@https://github.com/burdakovd/augur-dispute-crowdsourcer#befcd3e032a42a89c6847dd53c22668e43f7c0de":
   version "0.1.0"
-  resolved "https://github.com/burdakovd/augur-dispute-crowdsourcer#1c1bb5d598e260684ab7f3913b5f4fd79fb54d0e"
+  resolved "https://github.com/burdakovd/augur-dispute-crowdsourcer#befcd3e032a42a89c6847dd53c22668e43f7c0de"
 
 augur.js@^5.6.0:
   version "5.6.0"

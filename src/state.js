@@ -4,7 +4,7 @@ import * as fs from "fs-extra";
 import invariant from "invariant";
 import { Map as ImmMap, List as ImmList } from "immutable";
 
-const STATE_VERSION = 2;
+const STATE_VERSION = 3;
 
 export type Address = string;
 export type State = {|
@@ -14,6 +14,7 @@ export type State = {|
     {|
       numOutcomes: number,
       isOver: boolean,
+      lastObservedFeeWindow: number,
       crowdsourcers: ImmMap<
         string,
         {|
@@ -54,9 +55,10 @@ export function serializeState(state: State): string {
   return JSON.stringify({
     version: state.version,
     markets: state.markets
-      .map(({ numOutcomes, isOver, crowdsourcers }) => ({
+      .map(({ numOutcomes, isOver, lastObservedFeeWindow, crowdsourcers }) => ({
         numOutcomes,
         isOver,
+        lastObservedFeeWindow,
         crowdsourcers: crowdsourcers
           .map(o => ({ ...o, numerators: o.numerators.toArray() }))
           .toObject()
@@ -77,14 +79,17 @@ export function deserializeState(blob: string): ?State {
 
   const state = {
     version,
-    markets: ImmMap(markets).map(({ numOutcomes, isOver, crowdsourcers }) => ({
-      numOutcomes,
-      isOver,
-      crowdsourcers: ImmMap(crowdsourcers).map(o => ({
-        ...o,
-        numerators: ImmList(o.numerators)
-      }))
-    }))
+    markets: ImmMap(markets).map(
+      ({ numOutcomes, isOver, crowdsourcers, lastObservedFeeWindow }) => ({
+        numOutcomes,
+        isOver,
+        lastObservedFeeWindow,
+        crowdsourcers: ImmMap(crowdsourcers).map(o => ({
+          ...o,
+          numerators: ImmList(o.numerators)
+        }))
+      })
+    )
   };
   invariant(serializeState(state) === blob, "bad serde");
   return state;

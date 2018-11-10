@@ -7,107 +7,40 @@ import AugurCoreABI from "augur-core/output/contracts/abi.json";
 import CrowdsourcerFactory from "augur-dispute-crowdsourcer/build/contracts/CrowdsourcerFactory.json";
 import Crowdsourcer from "augur-dispute-crowdsourcer/build/contracts/Crowdsourcer.json";
 import Disputer from "augur-dispute-crowdsourcer/build/contracts/Disputer.json";
-import { Set as ImmSet, Range as ImmRange, List as ImmList } from "immutable";
+import { Set as ImmSet, List as ImmList, Map as ImmMap } from "immutable";
 import sleep from "sleep-promise";
-import Augur from "augur.js";
 import Web3 from "web3";
 import HDWalletProvider from "truffle-hdwallet-provider-privkey";
 import NonceTrackerSubprovider from "web3-provider-engine/subproviders/nonce-tracker";
 import nullthrows from "nullthrows";
+import invariant from "invariant";
+import AugurAddresses from "augur.js/src/contracts/addresses.json";
 import { stringifyCrowdsourcerSignature } from "./state";
 
-async function getUniverseAddress(augur: Augur): Promise<Address> {
-  const syncData = await new Promise((resolve, reject) =>
-    augur.augurNode.getSyncData(function(error, result) {
-      if (error) {
-        reject(error);
-      } else {
-        resolve(result);
-      }
-    })
-  );
-
-  return syncData.addresses.Universe;
+async function getUniverseAddress(web3: Web3): Promise<Address> {
+  const network = await web3.eth.net.getId();
+  return nullthrows(AugurAddresses[`${network}`].Universe);
 }
 
-async function findMarkets(
-  augur: Augur,
-  web3: Web3,
-  state: State
-): Promise<State> {
-  const universeAddress = await getUniverseAddress(augur);
+async function updateMarketFreshness(web3: Web3, state: State): Promise<State> {
+  const currentFeeWindowID = await getCurrentFeeWindowID(web3);
+  const universeAddress = await getUniverseAddress(web3);
+  const disputeRoundDurationSeconds = await new web3.eth.Contract(
+    AugurCoreABI.Universe,
+    universeAddress
+  ).methods
+    .getDisputeRoundDurationInSeconds()
+    .call()
+    .then(Number.parseInt);
 
-  const addresses: ImmSet<string> = await Promise.all(
-    ["CROWDSOURCING_DISPUTE", "AWAITING_NEXT_WINDOW"].map(
-      state =>
-        new Promise((resolve, reject) =>
-          augur.markets.getMarkets(
-            {
-              universe: universeAddress,
-              reportingState: state
-            },
-            function(error, result) {
-              if (error) {
-                reject(error);
-              } else {
-                resolve(result);
-              }
-            }
-          )
-        )
-    )
-  ).then(a =>
-    ImmList(a)
-      .flatMap(x => x)
-      .toSet()
-  );
-
-  const markets = await Promise.all(
-    addresses
-      .toArray()
-      .filter(address => !state.markets.has(address))
-      .map(async address => {
-        const numOutcomes = await new web3.eth.Contract(
-          AugurCoreABI.Market,
-          address
-        ).methods
-          .getNumberOfOutcomes()
-          .call()
-          .then(Number.parseInt);
-
-        const numTicks = await new web3.eth.Contract(
-          AugurCoreABI.Market,
-          address
-        ).methods
-          .getNumTicks()
-          .call()
-          .then(Number.parseInt);
-
-        if (numTicks !== 10000) {
-          return null;
-        }
-        return {
-          address,
-          numOutcomes
-        };
-      })
-  ).then(a => a.filter(x => x != null).map(x => nullthrows(x)));
-
-  for (const market of markets) {
-    console.log(`Discovered new market: ${market.address}`);
-    state = addMarket(state, market.address, {
-      numOutcomes: market.numOutcomes
-    });
-  }
-
-  return state;
-}
-
-async function markMarketIsOver(web3: Web3, state: State): Promise<State> {
   await Promise.all(
     state.markets
       .map(async (data, address) => {
         if (data.isOver) {
+          return;
+        }
+
+        if (data.lastObservedFeeWindow >= currentFeeWindowID) {
           return;
         }
 
@@ -118,23 +51,31 @@ async function markMarketIsOver(web3: Web3, state: State): Promise<State> {
           .getFeeWindow()
           .call();
 
-        if (web3.utils.toBN(feeWindowAddress).eq(web3.utils.toBN(0))) {
-          return;
-        }
+        invariant(
+          !web3.utils.toBN(feeWindowAddress).eq(web3.utils.toBN(0)),
+          "Should not have had this market"
+        );
 
-        const feeWindowIsOver = await new web3.eth.Contract(
+        const feeWindowEndTime = await new web3.eth.Contract(
           AugurCoreABI.FeeWindow,
           feeWindowAddress
         ).methods
-          .isOver()
-          .call();
+          .getEndTime()
+          .call()
+          .then(Number.parseInt);
 
-        if (feeWindowIsOver) {
-          state = {
-            ...state,
-            markets: state.markets.set(address, { ...data, isOver: true })
-          };
-        }
+        const observedFeeWindow =
+          Math.floor(feeWindowEndTime / disputeRoundDurationSeconds) - 1;
+
+        state = {
+          ...state,
+          markets: state.markets.set(address, {
+            ...data,
+            // if fee window is over for more than 1 hour, mark market as over
+            isOver: Date.now() / 1000 > feeWindowEndTime + 3600,
+            lastObservedFeeWindow: observedFeeWindow
+          })
+        };
       })
       .valueSeq()
       .toArray()
@@ -143,11 +84,8 @@ async function markMarketIsOver(web3: Web3, state: State): Promise<State> {
   return state;
 }
 
-async function getCurrentFeeWindowID(
-  augur: Augur,
-  web3: Web3
-): Promise<number> {
-  const universeAddress = await getUniverseAddress(augur);
+async function getCurrentFeeWindowID(web3: Web3): Promise<number> {
+  const universeAddress = await getUniverseAddress(web3);
   const disputeRoundDurationSeconds = await new web3.eth.Contract(
     AugurCoreABI.Universe,
     universeAddress
@@ -160,125 +98,250 @@ async function getCurrentFeeWindowID(
   return Math.floor(now / disputeRoundDurationSeconds);
 }
 
-async function discoverCrowdsourcers(
-  augur: Augur,
-  web3: Web3,
-  state: State
-): Promise<State> {
-  const currentFeeWindowID = await getCurrentFeeWindowID(augur, web3);
+async function discoverCrowdsourcers(web3: Web3, state: State): Promise<State> {
+  const currentFeeWindowID = await getCurrentFeeWindowID(web3);
+  const network = await web3.eth.net.getId().then(n => n.toString());
   console.log(`We are in fee window ${currentFeeWindowID}`);
 
-  await Promise.all(
+  const universeAddress = await getUniverseAddress(web3);
+  const disputeRoundDurationSeconds = await new web3.eth.Contract(
+    AugurCoreABI.Universe,
+    universeAddress
+  ).methods
+    .getDisputeRoundDurationInSeconds()
+    .call()
+    .then(Number.parseInt);
+
+  const potentialCrowdsourcers = await Promise.all(
     [currentFeeWindowID, currentFeeWindowID + 1].map(
-      async targetFeeWindowID =>
-        await Promise.all(
-          state.markets
-            .map(async (marketData, address) => {
-              if (marketData.isOver) {
-                return;
-              }
+      async targetFeeWindowID => {
+        const existingCrowdsourcers = state.markets
+          .valueSeq()
+          .flatMap(({ crowdsourcers }) => crowdsourcers.valueSeq())
+          .filter(({ feeWindowID }) => feeWindowID === targetFeeWindowID)
+          .map(({ address }) => address)
+          .toArray();
 
-              await Promise.all(
-                ImmList(ImmRange(0, marketData.numOutcomes))
-                  .push(null)
-                  .map(async outcomeIndex => {
-                    const invalid = outcomeIndex === null;
-                    const numTicks = 10000;
-                    const numerators = ImmRange(0, marketData.numOutcomes)
-                      .map(
-                        i =>
-                          invalid
-                            ? Math.floor(numTicks / marketData.numOutcomes)
-                            : i === outcomeIndex
-                              ? numTicks
-                              : 0
-                      )
-                      .toList();
+        var nextIndex: number = 0;
+        var potentialCrowdsourcers: ImmSet<Address> = ImmSet();
+        while (true) {
+          const {
+            "0": foundIndex,
+            "1": candidate
+          } = await new web3.eth.Contract(
+            CrowdsourcerFactory.abi,
+            CrowdsourcerFactory.networks[network].address
+          ).methods
+            .findCrowdsourcer(
+              web3.utils.toHex(targetFeeWindowID),
+              nextIndex,
+              // only consider pools with at least 0.01 REP in fees
+              web3.utils.toHex(web3.utils.toWei("0.01")),
+              existingCrowdsourcers
+            )
+            .call();
 
-                    const key = stringifyCrowdsourcerSignature(
-                      targetFeeWindowID,
-                      invalid,
-                      numerators
-                    );
+          if (web3.utils.toBN(candidate).eq(web3.utils.toBN(0))) {
+            break;
+          }
 
-                    if (marketData.crowdsourcers.has(key)) {
-                      return;
-                    }
+          nextIndex = Number.parseInt(foundIndex) + 1;
+          potentialCrowdsourcers = potentialCrowdsourcers.add(candidate);
+        }
 
-                    const poolAddress = await new web3.eth.Contract(
-                      CrowdsourcerFactory.abi,
-                      CrowdsourcerFactory.networks["1"].address
-                    ).methods
-                      .maybeGetCrowdsourcer(
-                        address,
-                        web3.utils.toHex(targetFeeWindowID),
-                        numerators.map(n => web3.utils.toHex(n)).toArray(),
-                        invalid
-                      )
-                      .call();
-
-                    if (web3.utils.toBN(poolAddress).eq(web3.utils.toBN(0))) {
-                      return;
-                    }
-
-                    const crowdsourcer = new web3.eth.Contract(
-                      Crowdsourcer.abi,
-                      poolAddress
-                    );
-
-                    const isInitialized = await crowdsourcer.methods
-                      .isInitialized()
-                      .call();
-
-                    if (!isInitialized) {
-                      return;
-                    }
-
-                    const disputer = await crowdsourcer.methods
-                      .getDisputer()
-                      .call();
-
-                    console.log(
-                      `Discovered new pool ${poolAddress} for market ${address}, '${
-                        invalid ? "invalid" : "valid"
-                      }', payout numerators ${JSON.stringify(
-                        numerators.toArray()
-                      )}, fee window ${targetFeeWindowID}`
-                    );
-
-                    state = {
-                      ...state,
-                      markets: state.markets.update(address, marketData => ({
-                        ...marketData,
-                        crowdsourcers: marketData.crowdsourcers.set(key, {
-                          feeWindowID: targetFeeWindowID,
-                          invalid,
-                          numerators,
-                          address: poolAddress,
-                          disputer: disputer
-                        })
-                      }))
-                    };
-                  })
-                  .toArray()
-              );
-            })
-            .valueSeq()
-            .toArray()
-        )
+        return potentialCrowdsourcers;
+      }
     )
+  ).then(async sets => ImmList(sets).flatMap(x => x));
+  if (potentialCrowdsourcers.size) {
+    console.log(
+      `Discovered ${potentialCrowdsourcers.size} potential new pools.`
+    );
+  }
+
+  const fetchAndValidateMarketData = (() => {
+    var cache: ImmMap<Address, Promise<void>> = ImmMap();
+
+    const impl = async (market: Address) => {
+      const isInOurUniverse = await new web3.eth.Contract(
+        AugurCoreABI.Universe,
+        universeAddress
+      ).methods
+        .isContainerForMarket(market)
+        .call();
+
+      if (!isInOurUniverse) {
+        console.log(
+          `Discarding market ${market} because it is not in our universe`
+        );
+        return;
+      }
+
+      const contract = new web3.eth.Contract(AugurCoreABI.Market, market);
+
+      const numOutcomes = await contract.methods
+        .getNumberOfOutcomes()
+        .call()
+        .then(Number.parseInt);
+      const numTicks = await contract.methods
+        .getNumTicks()
+        .call()
+        .then(Number.parseInt);
+
+      if (numTicks !== 10000) {
+        console.log(
+          `Discarding market ${market} because it has not 10000 ticks`
+        );
+        return;
+      }
+
+      const feeWindowAddress = await contract.methods.getFeeWindow().call();
+
+      if (web3.utils.toBN(feeWindowAddress).eq(web3.utils.toBN(0))) {
+        console.log(`Discarding market ${market} because it has no fee window`);
+        return;
+      }
+
+      const feeWindowID = await new web3.eth.Contract(
+        AugurCoreABI.FeeWindow,
+        feeWindowAddress
+      ).methods
+        .getStartTime()
+        .call()
+        .then(startTime =>
+          Math.floor(Number.parseInt(startTime) / disputeRoundDurationSeconds)
+        );
+
+      invariant(
+        !state.markets.has(market),
+        "We shouldn't have had this kind of race"
+      );
+
+      console.log(`Adding market ${market}`);
+      state = addMarket(state, market, {
+        numOutcomes,
+        feeWindow: feeWindowID
+      });
+    };
+
+    return async (market: Address) => {
+      if (state.markets.has(market)) {
+        return;
+      }
+
+      if (!cache.has(market)) {
+        cache = cache.set(market, impl(market));
+      }
+
+      await nullthrows(cache.get(market));
+    };
+  })();
+
+  await Promise.all(
+    potentialCrowdsourcers
+      .map(async (address: Address) => {
+        const crowdsourcer = new web3.eth.Contract(Crowdsourcer.abi, address);
+        const {
+          market,
+          feeWindowId,
+          payoutNumerators,
+          invalid
+        } = await crowdsourcer.methods.getDisputerParams().call();
+
+        await fetchAndValidateMarketData(market);
+        if (!state.markets.has(market)) {
+          console.log(
+            `Rejecting pool ${address} because corresponding market (${market}) got rejected.`
+          );
+          return;
+        }
+
+        const numTicks = 10000;
+
+        const isWellFormedVector = (): boolean => {
+          if (invalid) {
+            return ImmList(payoutNumerators).every(n =>
+              web3.utils
+                .toBN(n)
+                .eq(
+                  web3.utils.toBN(
+                    Math.floor(numTicks / payoutNumerators.length)
+                  )
+                )
+            );
+          } else {
+            return (
+              ImmList(payoutNumerators).count(
+                n => !web3.utils.toBN(n).eq(web3.utils.toBN(0))
+              ) === 1 &&
+              ImmList(payoutNumerators).count(n =>
+                web3.utils.toBN(n).eq(web3.utils.toBN(numTicks))
+              ) === 1
+            );
+          }
+        };
+
+        if (!isWellFormedVector()) {
+          console.log(
+            `Rejecting pool ${address} because it has malformed payout vector ${JSON.stringify(
+              {
+                invalid,
+                payoutNumerators
+              }
+            )}.`
+          );
+          return;
+        }
+
+        const key = stringifyCrowdsourcerSignature(
+          Number.parseInt(feeWindowId),
+          invalid,
+          ImmList(payoutNumerators).map(n => Number.parseInt(n))
+        );
+
+        invariant(
+          !nullthrows(state.markets.get(market)).crowdsourcers.has(key),
+          "We shouldn't have had this kind of race"
+        );
+
+        const disputer = await crowdsourcer.methods.getDisputer().call();
+
+        console.log(
+          `Discovered new pool ${address} for market ${market}, '${
+            invalid ? "invalid" : "valid"
+          }', payout numerators ${JSON.stringify(
+            payoutNumerators.map(n => Number.parseInt(n))
+          )}, fee window ${feeWindowId}`
+        );
+
+        state = {
+          ...state,
+          markets: state.markets.update(market, marketData => ({
+            ...nullthrows(marketData),
+            crowdsourcers: marketData.crowdsourcers.set(key, {
+              feeWindowID: Number.parseInt(feeWindowId),
+              invalid,
+              numerators: ImmList(payoutNumerators).map(n =>
+                Number.parseInt(n)
+              ),
+              address,
+              disputer
+            })
+          }))
+        };
+      })
+      .toArray()
   );
 
   return state;
 }
 
 async function collectFees(
-  augur: Augur,
   web3: Web3,
   config: Config,
   state: State
 ): Promise<State> {
-  const currentFeeWindowID = await getCurrentFeeWindowID(augur, web3);
+  const currentFeeWindowID = await getCurrentFeeWindowID(web3);
 
   await Promise.all(
     state.markets
@@ -327,7 +390,7 @@ async function collectFees(
               );
 
               await crowdsourcer.methods.withdrawFees().send({
-                from: web3.eth.defaultAccount,
+                from: config.feeCollectionTriggerAccount,
                 gas: 3000000
               });
 
@@ -353,11 +416,10 @@ async function collectFees(
 }
 
 async function cleanupOldCrowdsourcers(
-  augur: Augur,
   web3: Web3,
   state: State
 ): Promise<State> {
-  const currentFeeWindowID = await getCurrentFeeWindowID(augur, web3);
+  const currentFeeWindowID = await getCurrentFeeWindowID(web3);
 
   state.markets.forEach(async (marketData, marketAddress) => {
     marketData.crowdsourcers.forEach(
@@ -408,13 +470,12 @@ async function cleanupOldMarkets(state: State): Promise<State> {
 }
 
 async function runDisputes(
-  augur: Augur,
   web3: Web3,
   config: Config,
   state: State,
   persist: State => Promise<void>
 ): Promise<State> {
-  const currentFeeWindowID = await getCurrentFeeWindowID(augur, web3);
+  const currentFeeWindowID = await getCurrentFeeWindowID(web3);
   const targetFeeWindowID = currentFeeWindowID;
 
   // TODO: if we are about to start next window, do countdown
@@ -465,7 +526,7 @@ async function runDisputes(
               await disputer.methods.dispute(config.feeRecipient).send({
                 gas: 3000000,
                 gasPrice: premiumGasPrice,
-                from: web3.eth.defaultAccount
+                from: config.executionAccount
               });
 
               console.log(
@@ -489,7 +550,6 @@ async function runDisputes(
 }
 
 async function runIteration(
-  augur: Augur,
   web3: Web3,
   config: Config,
   state: State,
@@ -497,20 +557,18 @@ async function runIteration(
 ): Promise<State> {
   // TODO: if we are about to start next window, go straight to runDisputes
 
-  state = await findMarkets(augur, web3, state);
+  state = await discoverCrowdsourcers(web3, state);
   await persist(state);
-  state = await markMarketIsOver(web3, state);
-  await persist(state);
-  state = await discoverCrowdsourcers(augur, web3, state);
+  state = await updateMarketFreshness(web3, state);
   await persist(state);
   // TODO: do not start collectFees if we have less than 48 hours before next window
-  state = await collectFees(augur, web3, config, state);
+  state = await collectFees(web3, config, state);
   await persist(state);
-  state = await cleanupOldCrowdsourcers(augur, web3, state);
+  state = await cleanupOldCrowdsourcers(web3, state);
   await persist(state);
   state = await cleanupOldMarkets(state);
   await persist(state);
-  state = await runDisputes(augur, web3, config, state, persist);
+  state = await runDisputes(web3, config, state, persist);
   await persist(state);
 
   await sleep(10000);
@@ -521,39 +579,46 @@ async function runIterationFactory(
   config: Config,
   persist: State => Promise<void>
 ): Promise<(state: State) => Promise<State>> {
-  const augur = new Augur();
+  const makeWeb3 = accounts => {
+    const wallet = new HDWalletProvider(
+      ImmMap(accounts)
+        .valueSeq()
+        .toArray(),
+      config.ethereumNode
+    );
+    const nonceTracker = new NonceTrackerSubprovider();
+    wallet.engine._providers.unshift(nonceTracker);
+    nonceTracker.setEngine(wallet.engine);
 
-  const wallet = new HDWalletProvider(
-    [config.executionPrivateKey],
-    config.ethereumNode
-  );
-  const nonceTracker = new NonceTrackerSubprovider();
-  wallet.engine._providers.unshift(nonceTracker);
-  nonceTracker.setEngine(wallet.engine);
+    const web3 = new Web3(wallet);
 
-  const web3 = new Web3(wallet);
+    ImmMap(accounts).forEach((key, account) =>
+      invariant(
+        web3.eth.accounts
+          .privateKeyToAccount("0x" + key)
+          .address.toLowerCase() === account.toLowerCase(),
+        `Account ${account} does not match its private key (we get ${web3.eth.accounts.privateKeyToAccount(
+          "0x" + config.executionPrivateKey
+        )} instead)`
+      )
+    );
 
-  const account = web3.eth.accounts.privateKeyToAccount(
-    "0x" + config.executionPrivateKey
-  );
-  web3.eth.defaultAccount = account.address;
+    console.log(`Using account ${config.executionAccount} for execution`);
+    console.log(
+      `Using account ${
+        config.feeCollectionTriggerAccount
+      } for fee collection triggering`
+    );
 
-  console.log(`Using account ${account.address} for execution`);
+    return web3;
+  };
 
-  await new Promise((resolve, reject) =>
-    augur.connect(
-      { ethereumNode: {}, augurNode: config.augurNode },
-      (err, connectionInfo) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(connectionInfo);
-        }
-      }
-    )
-  );
+  const web3 = makeWeb3({
+    [config.executionAccount]: config.executionPrivateKey,
+    [config.feeCollectionTriggerAccount]: config.feeCollectionTriggerPrivateKey
+  });
 
-  return state => runIteration(augur, web3, config, state, persist);
+  return state => runIteration(web3, config, state, persist);
 }
 
 export default runIterationFactory;
