@@ -353,7 +353,9 @@ async function discoverCrowdsourcers(web3: Web3, state: State): Promise<State> {
                 Number.parseInt(n)
               ),
               address,
-              disputer
+              disputer,
+              weDisputed: false,
+              weCollectedFees: false
             })
           }))
         };
@@ -380,6 +382,10 @@ async function collectFees(
           crowdsourcers
             .map(async (crowdsourcerData, crowdsourcerKey) => {
               if (crowdsourcerData.feeWindowID > currentFeeWindowID) {
+                return;
+              }
+
+              if (crowdsourcerData.weCollectedFees) {
                 return;
               }
 
@@ -421,6 +427,20 @@ async function collectFees(
                 from: config.feeCollectionTriggerAccount,
                 gas: 3000000
               });
+
+              state = {
+                ...state,
+                markets: state.markets.update(marketAddress, marketData => ({
+                  ...nullthrows(marketData),
+                  crowdsourcers: marketData.crowdsourcers.update(
+                    crowdsourcerKey,
+                    data => ({
+                      ...data,
+                      weCollectedFees: true
+                    })
+                  )
+                }))
+              };
 
               console.log(
                 `Mined transaction to collect fees from ${
@@ -563,6 +583,10 @@ async function runDisputes(
           marketData.crowdsourcers
             .map(async (crowdsourcerData, crowdsourcerKey) => {
               if (crowdsourcerData.feeWindowID !== targetFeeWindowID) {
+                return null;
+              }
+
+              if (crowdsourcerData.weDisputed) {
                 return null;
               }
 
@@ -745,8 +769,6 @@ async function runDisputes(
                 )} ETH.`
               );
 
-              // todo: do not dispute more than once
-
               const runner = async () => {
                 console.log(
                   `Sending dispute transaction for disputer ${
@@ -754,11 +776,25 @@ async function runDisputes(
                   }, market ${marketAddress} (${crowdsourcerKey})`
                 );
 
-                /*await disputer.methods.dispute(config.feeRecipient).send({
-                    gas: expectedGasUsed * 2,
-                    gasPrice: targetGasPrice,
-                    from: config.executionAccount
-                  });*/
+                await disputer.methods.dispute(config.feeRecipient).send({
+                  gas: expectedGasUsed * 2,
+                  gasPrice: targetGasPrice,
+                  from: config.executionAccount
+                });
+
+                state = {
+                  ...state,
+                  markets: state.markets.update(marketAddress, marketData => ({
+                    ...nullthrows(marketData),
+                    crowdsourcers: marketData.crowdsourcers.update(
+                      crowdsourcerKey,
+                      data => ({
+                        ...data,
+                        weDisputed: true
+                      })
+                    )
+                  }))
+                };
 
                 console.log(
                   `Done dispute transaction for disputer ${
@@ -852,9 +888,11 @@ async function runIteration(
     console.log(
       `Skipping fee collection, since there is less than 24 hours remaining before window end, and fee collection may take long.`
     );
+  } else {
     state = await collectFees(web3, config, state);
     await persist(state);
   }
+
   state = await cleanupOldCrowdsourcers(web3, state);
   await persist(state);
   state = await cleanupOldMarkets(state);
@@ -862,7 +900,7 @@ async function runIteration(
   state = await runDisputes(web3, config, state, persist);
   await persist(state);
 
-  await sleep(10000);
+  await sleep(300000);
   return state;
 }
 

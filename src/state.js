@@ -22,7 +22,9 @@ export type State = {|
           invalid: boolean,
           numerators: ImmList<number>,
           address: Address,
-          disputer: Address
+          disputer: Address,
+          weDisputed: boolean,
+          weCollectedFees: boolean
         |}
       >
     |}
