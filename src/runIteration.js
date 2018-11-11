@@ -715,7 +715,7 @@ async function runDisputes(
                   web3.utils
                     .toBN(feeNumerator)
                     .mul(possibleContributionFromOurPool)
-                    .divn(web3.utils.toBN(1000))
+                    .div(web3.utils.toBN(1000))
                 );
 
               const expectedGasUsed = 1500000;
@@ -729,7 +729,7 @@ async function runDisputes(
                 .div(
                   web3.utils.toBN(Math.floor(repInOneETH * 1000000).toString())
                 )
-                .divn(web3.utils.toBN(expectedGasUsed));
+                .div(web3.utils.toBN(expectedGasUsed));
 
               if (targetGasPrice.lt(web3.utils.toBN(config.minGasPrice))) {
                 console.log(
