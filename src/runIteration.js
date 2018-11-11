@@ -900,6 +900,7 @@ async function runIteration(
   state = await runDisputes(web3, config, state, persist);
   await persist(state);
 
+  console.log(`Sleping 5 minutes before next iteration`);
   await sleep(300000);
   return state;
 }

@@ -3,7 +3,7 @@
 import yargs from "yargs";
 import * as fs from "fs-extra";
 import loadConfig from "./config";
-import { loadState, serializeState, saveState } from "./state";
+import { getInitialState, loadState, serializeState, saveState } from "./state";
 import runIterationFactory from "./runIteration";
 import type { State } from "./state";
 import sleep from "sleep-promise";
@@ -26,6 +26,13 @@ async function printState(argv): Promise<void> {
   const state = await loadState(argv.state);
   summarize(state);
   console.log(serializeState(state));
+}
+
+async function resetState(argv): Promise<void> {
+  const state = getInitialState();
+  summarize(state);
+  await saveState(state, argv.state + ".tmp");
+  await fs.rename(argv.state + ".tmp", argv.state);
 }
 
 async function run(argv): Promise<void> {
@@ -70,6 +77,7 @@ function main() {
   yargs
     .usage("$0 command")
     .command("printConfig", "print config", y => y, argv => printConfig(argv))
+    .command("resetState", "reset state", y => y, argv => resetState(argv))
     .command("printState", "print state", y => y, argv => printState(argv))
     .command("run", "run", y => y, argv => run(argv))
     .demandCommand()
