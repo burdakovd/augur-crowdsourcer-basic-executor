@@ -35,7 +35,7 @@ async function resetState(argv): Promise<void> {
   await fs.rename(argv.state + ".tmp", argv.state);
 }
 
-async function run(argv): Promise<void> {
+async function run(argv, syncOnly = false): Promise<void> {
   require("log-timestamp");
 
   const config = await loadConfig(argv.config);
@@ -54,7 +54,11 @@ async function run(argv): Promise<void> {
     console.log("Persisted state");
   };
 
-  const runIteration = await runIterationFactory(config, persist);
+  const [runIteration, shutdown] = await runIterationFactory(
+    config,
+    persist,
+    syncOnly
+  );
 
   var i = 0;
   while (true) {
@@ -69,7 +73,14 @@ async function run(argv): Promise<void> {
       await sleep(10000);
     }
     i += 1;
+
+    if (syncOnly) {
+      break;
+    }
   }
+
+  shutdown();
+  process.exit();
 }
 
 function main() {
@@ -79,6 +90,12 @@ function main() {
     .command("printConfig", "print config", y => y, argv => printConfig(argv))
     .command("resetState", "reset state", y => y, argv => resetState(argv))
     .command("printState", "print state", y => y, argv => printState(argv))
+    .command(
+      "sync",
+      "Run one iteration without sending any transactions.",
+      y => y,
+      argv => run(argv, true)
+    )
     .command("run", "run", y => y, argv => run(argv))
     .demandCommand()
     .option("config", {

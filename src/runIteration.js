@@ -861,7 +861,8 @@ async function runIteration(
   web3: Web3,
   config: Config,
   state: State,
-  persist: State => Promise<void>
+  persist: State => Promise<void>,
+  syncOnly: boolean
 ): Promise<State> {
   const currentWindowEndTimestamp = await getCurrentWindowEndTimestamp(
     web3,
@@ -884,31 +885,38 @@ async function runIteration(
   state = await updateMarketFreshness(web3, state);
   await persist(state);
 
-  if (currentWindowEndTimestamp < Date.now() / 1000 + 86400) {
-    console.log(
-      `Skipping fee collection, since there is less than 24 hours remaining before window end, and fee collection may take long.`
-    );
-  } else {
-    state = await collectFees(web3, config, state);
-    await persist(state);
+  if (!syncOnly) {
+    if (currentWindowEndTimestamp < Date.now() / 1000 + 86400) {
+      console.log(
+        `Skipping fee collection, since there is less than 24 hours remaining before window end, and fee collection may take long.`
+      );
+    } else {
+      state = await collectFees(web3, config, state);
+      await persist(state);
+    }
   }
 
   state = await cleanupOldCrowdsourcers(web3, state);
   await persist(state);
   state = await cleanupOldMarkets(state);
   await persist(state);
-  state = await runDisputes(web3, config, state, persist);
-  await persist(state);
 
-  console.log(`Sleping 5 minutes before next iteration`);
-  await sleep(300000);
+  if (!syncOnly) {
+    state = await runDisputes(web3, config, state, persist);
+    await persist(state);
+
+    console.log(`Sleping 5 minutes before next iteration`);
+    await sleep(300000);
+  }
+
   return state;
 }
 
 async function runIterationFactory(
   config: Config,
-  persist: State => Promise<void>
-): Promise<(state: State) => Promise<State>> {
+  persist: State => Promise<void>,
+  syncOnly: boolean
+): Promise<[(state: State) => Promise<State>, () => void]> {
   const makeWeb3 = accounts => {
     const wallet = new HDWalletProvider(
       ImmMap(accounts)
@@ -927,9 +935,11 @@ async function runIterationFactory(
         web3.eth.accounts
           .privateKeyToAccount("0x" + key)
           .address.toLowerCase() === account.toLowerCase(),
-        `Account ${account} does not match its private key (we get ${web3.eth.accounts.privateKeyToAccount(
-          "0x" + config.executionPrivateKey
-        )} instead)`
+        `Account ${account} does not match its private key (we get ${
+          web3.eth.accounts.privateKeyToAccount(
+            "0x" + config.executionPrivateKey
+          ).address
+        } instead)`
       )
     );
 
@@ -943,12 +953,18 @@ async function runIterationFactory(
     return web3;
   };
 
-  const web3 = makeWeb3({
-    [config.executionAccount]: config.executionPrivateKey,
-    [config.feeCollectionTriggerAccount]: config.feeCollectionTriggerPrivateKey
-  });
+  const web3 = syncOnly
+    ? new Web3(config.ethereumNode)
+    : makeWeb3({
+        [config.executionAccount]: config.executionPrivateKey,
+        [config.feeCollectionTriggerAccount]:
+          config.feeCollectionTriggerPrivateKey
+      });
 
-  return state => runIteration(web3, config, state, persist);
+  return [
+    state => runIteration(web3, config, state, persist, syncOnly),
+    () => {}
+  ];
 }
 
 export default runIterationFactory;
