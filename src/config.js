@@ -13,7 +13,8 @@ export type Config = {|
   minGasPrice: number,
   maxGasPrice: number,
   aggressiveness: number,
-  mockFeeWindowEnd: ?number
+  mockFeeWindowEnd: ?number,
+  offsetForWindowStart: ?number,
 |};
 
 async function loadConfig(path: string): Promise<Config> {
