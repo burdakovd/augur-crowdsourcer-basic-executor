@@ -14,7 +14,7 @@ export type Config = {|
   maxGasPrice: number,
   aggressiveness: number,
   mockFeeWindowEnd: ?number,
-  offsetForWindowStart: ?number,
+  offsetForWindowStart: ?number
 |};
 
 async function loadConfig(path: string): Promise<Config> {
