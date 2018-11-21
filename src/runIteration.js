@@ -837,7 +837,7 @@ async function runDisputes(
   );
 
   if (isNearWindowEnd) {
-    console.log(`Waiting until next window starts (or actually ${config.offsetForWindowStart} seconds before that).`);
+    console.log(`Waiting until next window starts (or actually ${config.offsetForWindowStart || 0} seconds before that).`);
     await possiblyWait(currentWindowEndTimestamp + (config.offsetForWindowStart || 0));
   }
 
