@@ -623,7 +623,7 @@ async function runDisputes(
 
               if (disputingRound !== numParticipants) {
                 console.log(
-                  `Not disputing market ${marketAddress} (${crowdsourcerKey}) because it has only ${numParticipants} rounds now, and we want round ${disputingRound}, likely this market already has winning outcome.`
+                  `Not disputing market ${marketAddress} (${crowdsourcerKey}) because it only ${numParticipants} rounds now, and we want round ${disputingRound}, likely this market already has winning outcome (or someone else not from our pool has disputed this round already).`
                 );
                 return null;
               }
