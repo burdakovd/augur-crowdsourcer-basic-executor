@@ -821,7 +821,7 @@ async function runDisputes(
       .toArray()
   )
     .then(a => a.filter(x => x != null).map(x => nullthrows(x)))
-    .then(a => ImmList(a).sortBy(({ gasPrice }) => gasPrice));
+    .then(a => ImmList(a).sortBy(({ gasPrice }) => -gasPrice));
 
   if (runners.size === 0) {
     return state;
