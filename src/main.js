@@ -47,7 +47,6 @@ async function run(argv, syncOnly = false): Promise<void> {
     if (serializeState(state) === serializeState(globalState)) {
       return;
     }
-    summarize(state);
     await saveState(state, argv.state + ".tmp");
     await fs.rename(argv.state + ".tmp", argv.state);
     globalState = state;
@@ -67,6 +66,7 @@ async function run(argv, syncOnly = false): Promise<void> {
       globalState = await runIteration(globalState);
       console.log(`Finished iteration ${i}`);
       await persist(globalState);
+      summarize(globalState);
     } catch (e) {
       console.error(`Failed iteration ${i}`);
       console.error(e.stack);
