@@ -426,7 +426,7 @@ async function collectFees(
               await crowdsourcer.methods.withdrawFees().send({
                 from: config.feeCollectionTriggerAccount,
                 gas: 3000000,
-                gasPrice: config.minGasPrice,
+                gasPrice: config.minGasPrice
               });
 
               state = {
