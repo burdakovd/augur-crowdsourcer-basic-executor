@@ -8,6 +8,6 @@
   "feeCollectionTriggerPrivateKey":
     "da3b34aa4e9697e247e7b79de8323fd6d6f5883c4cae92436d2fca22de23634c",
   "minGasPrice": 10000000000,
-  "maxGasPrice": 100000000000,
+  "maxGasPrice": 200000000000,
   "aggressiveness": 0.3
 }
