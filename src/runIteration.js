@@ -719,7 +719,7 @@ async function runDisputes(
                     .div(web3.utils.toBN(1000))
                 );
 
-              const expectedGasUsed = 1500000;
+              const expectedGasUsed = 1300000;
 
               var targetGasPrice = possibleFeesCollected
                 .mul(
