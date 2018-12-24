@@ -1,5 +1,5 @@
 {
-  "ethereumNode": "https://gethnode.com/http",
+  "ethereumNode": "https://mainnet.infura.io/augur",
   "feeRecipient": "0x2404a39e447d0c8b417049fc42b468a26990b4cc",
   "executionAccount": "...",
   "executionPrivateKey":
